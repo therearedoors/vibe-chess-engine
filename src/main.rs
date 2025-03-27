@@ -70,9 +70,10 @@ Ok(())
 
 fn calculate_move(game_state: &GameState) -> ChessMove {
     let mut game_state = game_state.clone();
-    let depth = 2;
-    let is_maximizing = game_state.current_turn == "white"; // Compute this first
-    let (_score, best_move) = minimax(&mut game_state, depth, -i32::MAX, i32::MAX, is_maximizing);
+    let mut move_buffer = Vec::new();
+    let depth = 2; // Test with 2
+    let is_maximizing = game_state.current_turn == "white";
+    let (_score, best_move) = minimax(&mut game_state, depth, -i32::MAX, i32::MAX, is_maximizing, &mut move_buffer);
     best_move.unwrap_or_else(|| ChessMove {
         from_row: 0,
         from_col: 0,
@@ -500,96 +501,97 @@ fn evaluate_position(game_state: &GameState) -> i32 {
     score
 }
 
-fn minimax(game_state: &mut GameState, depth: i32, alpha: i32, beta: i32, maximizing: bool) -> (i32, Option<ChessMove>) {
+fn minimax(game_state: &mut GameState, depth: i32, alpha: i32, beta: i32, maximizing: bool, move_buffer: &mut Vec<ChessMove>) -> (i32, Option<ChessMove>) {
+    eprintln!("Minimax depth: {}", depth);
     if depth == 0 {
-        return (quiescence_search(game_state, alpha, beta, maximizing, 4), None);
+        return (quiescence_search(game_state, alpha, beta, maximizing, 4, move_buffer), None);
     }
 
-    let moves = generate_legal_moves(game_state);
-    if moves.is_empty() {
+    move_buffer.clear();
+    move_buffer.extend(generate_legal_moves(game_state));
+    if move_buffer.is_empty() {
         return (if maximizing { -100000 } else { 100000 }, None);
     }
 
     let mut best_move = None;
     let original_turn = game_state.current_turn.clone();
+    let moves = move_buffer.clone(); // Clone to avoid borrow conflict
 
     if maximizing {
         let mut max_eval = -i32::MAX;
-        let mut alpha = alpha;
-        for m in moves {
-            let undo = apply_move_in_place(game_state, &m);
+        let alpha = alpha; // Remove redundant mut
+        for m in moves.iter() {
+            let undo = apply_move_in_place(game_state, m);
             if is_in_check(game_state, original_turn.as_str()) {
-                undo_move(game_state, &m, undo);
+                undo_move(game_state, m, undo);
                 continue;
             }
-            let (eval, _) = minimax(game_state, depth - 1, alpha, beta, false);
+            let (eval, _) = minimax(game_state, depth - 1, alpha, beta, false, move_buffer);
             if eval > max_eval {
                 max_eval = eval;
                 best_move = Some(m.clone());
             }
-            alpha = alpha.max(eval);
-            undo_move(game_state, &m, undo);
+            undo_move(game_state, m, undo);
             if beta <= alpha { break; }
         }
         (max_eval, best_move)
     } else {
         let mut min_eval = i32::MAX;
-        let mut beta = beta;
-        for m in moves {
-            let undo = apply_move_in_place(game_state, &m);
+        let beta = beta; // Remove redundant mut
+        for m in moves.iter() {
+            let undo = apply_move_in_place(game_state, m);
             if is_in_check(game_state, original_turn.as_str()) {
-                undo_move(game_state, &m, undo);
+                undo_move(game_state, m, undo);
                 continue;
             }
-            let (eval, _) = minimax(game_state, depth - 1, alpha, beta, true);
+            let (eval, _) = minimax(game_state, depth - 1, alpha, beta, true, move_buffer);
             if eval < min_eval {
                 min_eval = eval;
                 best_move = Some(m.clone());
             }
-            beta = beta.min(eval);
-            undo_move(game_state, &m, undo);
+            undo_move(game_state, m, undo);
             if beta <= alpha { break; }
         }
         (min_eval, best_move)
     }
 }
 
-fn quiescence_search(game_state: &mut GameState, mut alpha: i32, mut beta: i32, maximizing: bool, max_depth: i32) -> i32 {
+fn quiescence_search(game_state: &mut GameState, mut alpha: i32, mut beta: i32, maximizing: bool, max_depth: i32, move_buffer: &mut Vec<ChessMove>) -> i32 {
+    eprintln!("Quiescence depth: {}", max_depth);
     let stand_pat = evaluate_position(game_state);
     if !maximizing && stand_pat >= beta { return beta; }
     if maximizing && stand_pat < alpha { return alpha; }
     if maximizing { alpha = alpha.max(stand_pat); } else { beta = beta.min(stand_pat); }
-    if max_depth <= 0 { return stand_pat; } // Stop recursion here
+    if max_depth <= 0 { return stand_pat; }
 
-    let moves = generate_legal_moves(game_state)
-        .into_iter()
-        .filter(|m| game_state.board[m.to_row as usize][m.to_col as usize].is_some()) // Captures only
-        .collect::<Vec<_>>();
+    move_buffer.clear();
+    move_buffer.extend(generate_legal_moves(game_state).into_iter().filter(|m| game_state.board[m.to_row as usize][m.to_col as usize].is_some()));
+    let moves = move_buffer.clone(); // Clone to avoid borrow conflict
 
     let original_turn = game_state.current_turn.clone();
     if maximizing {
-        for m in moves {
-            let undo = apply_move_in_place(game_state, &m);
+        for m in moves.iter() {
+            let undo = apply_move_in_place(game_state, m);
             if is_in_check(game_state, original_turn.as_str()) {
-                undo_move(game_state, &m, undo);
+                undo_move(game_state, m, undo);
                 continue;
             }
-            let score = quiescence_search(game_state, alpha, beta, false, max_depth - 1);
+            let score = quiescence_search(game_state, alpha, beta, false, max_depth - 1, move_buffer);
             alpha = alpha.max(score);
-            undo_move(game_state, &m, undo);
+            undo_move(game_state, m, undo);
             if beta <= alpha { break; }
         }
         alpha
     } else {
-        for m in moves {
-            let undo = apply_move_in_place(game_state, &m);
+        for m in moves.iter() {
+            let undo = apply_move_in_place(game_state, m);
             if is_in_check(game_state, original_turn.as_str()) {
-                undo_move(game_state, &m, undo);
+                undo_move(game_state, m, undo);
                 continue;
             }
-            let score = quiescence_search(game_state, alpha, beta, true, max_depth - 1);
+            let score = quiescence_search(game_state, alpha, beta, true, max_depth - 1, move_buffer);
             beta = beta.min(score);
-            undo_move(game_state, &m, undo);
+            undo_move(game_state, m, undo);
             if beta <= alpha { break; }
         }
         beta
